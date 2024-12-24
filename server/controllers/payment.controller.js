@@ -71,7 +71,7 @@ export const verify = async (req, res) => {
       // Save Payment to MongoDb
       await payment.save();
       const getUser = await User.findOne({ name: "Dhruv" });
-      console.log(getUser);
+      // console.log(getUser);
       if (getUser) {
         getUser.userBalance = Number(getUser.userBalance) + Number(amount / 100);
         console.log(`Updated user details: ${JSON.stringify(getUser)}`);
@@ -107,10 +107,10 @@ export const getAmount = async (req, res) => {
         amount: user.userBalance,
       });
     } else {
-      // res.json({
-      //     message: "User not found",
-      //     success: false
-      // });
+      res.json({
+          message: "User not found",
+          success: false
+      });
       console.log("User not found");
     }
   } catch (err) {}
