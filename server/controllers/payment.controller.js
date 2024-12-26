@@ -3,6 +3,7 @@ import crypto from "crypto";
 import dotenv from "dotenv";
 import { Payment } from "../models/payment.model.js";
 import { User } from "../models/user.model.js";
+
 dotenv.config();
 
 const razorpayInstance = new Razorpay({
@@ -10,108 +11,103 @@ const razorpayInstance = new Razorpay({
   key_secret: process.env.RAZORPAY_SECRET,
 });
 
+// Payment endpoint (for testing connectivity)
 export const payment = (req, res) => {
-  res.json("Payment Details");
+  res.json({ message: "Payment Details" });
 };
 
-export const order = (req, res) => {
+// Create a new Razorpay order
+export const order = async (req, res) => {
   const { amount } = req.body;
-  try {
-    const options = {
-      amount: Number(amount * 100), //Amount in Paise
-      currency: "INR",
-      receipt: crypto.randomBytes(10).toString("hex"), // Random receipt number
-      payment_capture: 1, //Payment capture
-    };
 
-    razorpayInstance.orders.create(options, (error, order) => {
-      if (error) {
-        console.log(error);
-        res.status(500).json({
-          message: "Server Error",
-          success: false,
-        });
-      } else {
-        res.status(200).json({
-          data: order,
-        });
-        // console.log(order)
-      }
-    });
-  } catch (err) {
-    res.status(500).json({
-      message: "Server Error",
-      success: false,
-    });
+  if (!amount) {
+    return res
+      .status(400)
+      .json({ message: "Amount is required", success: false });
+  }
+
+  const options = {
+    amount: Math.round(amount * 100), // Amount in paise
+    currency: "INR",
+    receipt: crypto.randomBytes(10).toString("hex"), // Random receipt number
+    payment_capture: 1, // Payment capture
+  };
+
+  try {
+    const order = await razorpayInstance.orders.create(options);
+    res.status(200).json({ data: order });
+  } catch (error) {
+    console.error("Order creation failed:", error);
+    res.status(500).json({ message: "Failed to create order", success: false });
   }
 };
 
+// Verify Razorpay payment
 export const verify = async (req, res) => {
   const { amount, razorpay_signature, razorpay_payment_id, razorpay_order_id } =
     req.body;
 
+  if (!razorpay_signature || !razorpay_payment_id || !razorpay_order_id) {
+    return res
+      .status(400)
+      .json({ message: "Invalid payment details", success: false });
+  }
+
   try {
-    //Create Signature
-    const sign = razorpay_order_id + "|" + razorpay_payment_id;
-    //Expected Signature
+    const sign = `${razorpay_order_id}|${razorpay_payment_id}`;
     const expectedSignature = crypto
       .createHmac("sha256", process.env.RAZORPAY_SECRET)
-      .update(sign.toString())
+      .update(sign)
       .digest("hex");
 
-    const isAuthentic = expectedSignature === razorpay_signature;
-    // console.log(isAuthentic);
-    if (isAuthentic) {
-      const payment = new Payment({
-        razorpay_order_id,
-        razorpay_payment_id,
-        razorpay_signature,
-        amount,
-      });
-      // Save Payment to MongoDb
-      await payment.save();
-      const getUser = await User.findOne({ name: "Dhruv" });
-      // console.log(getUser);
-      if (getUser) {
-        getUser.userBalance = Number(getUser.userBalance) + Number(amount / 100);
-        console.log(`Updated user details: ${JSON.stringify(getUser)}`);
-        await getUser.save();
-    } else {
-        const user = new User({
-          name: "Dhruv",
-          userBalance: amount / 100,
-        });
-        await user.save();
-      }
-
-      res.status(200).json({
-        message: "Payment Success",
-        success: true,
-      });
+    if (expectedSignature !== razorpay_signature) {
+      return res
+        .status(400)
+        .json({ message: "Invalid signature", success: false });
     }
-  } catch (err) {
-    console.log(err);
-    res.status(500).json({
-      message: "Server Error",
-      success: false,
+
+    // Save payment to database
+    const payment = new Payment({
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+      amount,
     });
+
+    await payment.save();
+
+    const userName = "Dhruv";
+    let user = await User.findOne({ name: userName });
+
+    if (user) {
+      user.userBalance = Number(user.userBalance) + Number(amount) / 100;
+    } else {
+      user = new User({ name: userName, userBalance: Number(amount) / 100 });
+    }
+
+    await user.save();
+
+    res.status(200).json({ message: "Payment successful", success: true });
+  } catch (error) {
+    console.error("Verification failed:", error);
+    res.status(500).json({ message: "Server error", success: false });
   }
 };
 
+// Retrieve user balance
 export const getAmount = async (req, res) => {
+  const userName = "Dhruv";
+
   try {
-    const user = await User.findOne({ name: "Dhruv" });
+    const user = await User.findOne({ name: userName });
+
     if (user) {
-      console.log(user);
-      res.json({
-        amount: user.userBalance,
-      });
-    } else {
-      res.json({
-          message: "User not found",
-          success: false
-      });
-      console.log("User not found");
+      return res.json({ amount: user.userBalance });
     }
-  } catch (err) {}
+
+    res.status(404).json({ message: "User not found", success: false });
+  } catch (error) {
+    console.error("Failed to fetch user balance:", error);
+    res.status(500).json({ message: "Server error", success: false });
+  }
 };
